@@ -1,0 +1,64 @@
+name: Build ZENIX
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.12
+
+      - name: Unpack project zip if used
+        run: |
+          if [ -f zenix-project.zip ]; then
+            mkdir -p project
+            unzip -q -o zenix-project.zip -d project
+          else
+            mkdir -p project
+            shopt -s extglob dotglob
+            cp -r !(project|.git|.github) project/
+          fi
+          ls project
+
+      - name: Build
+        working-directory: project
+        run: gradle build --stacktrace --no-daemon
+
+      - name: Verify jar
+        working-directory: project
+        run: |
+          J=build/libs/zenix-client-1.0.0.jar
+          ls -la build/libs
+          test -f "$J"
+          unzip -l "$J" | grep -E "fabric.mod.json|zenix.mixins.json|zenix-refmap|com/zenix/Zenix.class|gui/ClickGui.class|mixin/BackgroundRendererMixin.class|mixin/MinecraftClientMixin.class"
+          unzip -p "$J" fabric.mod.json | python3 -m json.tool > /dev/null
+          unzip -p "$J" zenix.mixins.json | python3 -m json.tool
+          cp "$J" ../zenix-client-1.0.0.jar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zenix-client-1.0.0
+          path: zenix-client-1.0.0.jar
+
+      - name: Release (direct download link)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: ZENIX CLIENT build ${{ github.run_number }}
+          files: zenix-client-1.0.0.jar
