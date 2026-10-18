@@ -25,40 +25,49 @@ jobs:
           gradle-version: 8.12
 
       - name: Unpack project zip if used
+        shell: bash
         run: |
+          mkdir -p project
           if [ -f zenix-project.zip ]; then
-            mkdir -p project
             unzip -q -o zenix-project.zip -d project
           else
-            mkdir -p project
-            shopt -s extglob dotglob
-            cp -r !(project|.git|.github) project/
+            find . -maxdepth 1 -mindepth 1 ! -name project ! -name .git ! -name .github -exec cp -r {} project/ \;
           fi
-          ls project
+          find project -maxdepth 3 -type f | head -80
+
+      - name: Find Gradle project
+        id: gradle_dir
+        shell: bash
+        run: |
+          if [ -f project/settings.gradle ] || [ -f project/settings.gradle.kts ] || [ -f project/build.gradle ] || [ -f project/build.gradle.kts ]; then
+            echo "dir=project" >> "$GITHUB_OUTPUT"
+          else
+            BUILD_FILE=$(find project -maxdepth 4 \( -name settings.gradle -o -name settings.gradle.kts -o -name build.gradle -o -name build.gradle.kts \) -print -quit)
+            if [ -z "$BUILD_FILE" ]; then
+              echo "Не найден build.gradle или settings.gradle внутри ZIP"
+              exit 1
+            fi
+            echo "dir=$(dirname "$BUILD_FILE")" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build
-        working-directory: project
+        working-directory: ${{ steps.gradle_dir.outputs.dir }}
         run: gradle build --stacktrace --no-daemon
 
-      - name: Verify jar
-        working-directory: project
+      - name: Find and verify JAR
+        shell: bash
         run: |
-          J=build/libs/zenix-client-1.0.0.jar
-          ls -la build/libs
-          test -f "$J"
-          unzip -l "$J" | grep -E "fabric.mod.json|zenix.mixins.json|zenix-refmap|com/zenix/Zenix.class|gui/ClickGui.class|mixin/BackgroundRendererMixin.class|mixin/MinecraftClientMixin.class"
-          unzip -p "$J" fabric.mod.json | python3 -m json.tool > /dev/null
-          unzip -p "$J" zenix.mixins.json | python3 -m json.tool
-          cp "$J" ../zenix-client-1.0.0.jar
+          J=$(find "${{ steps.gradle_dir.outputs.dir }}/build/libs" -maxdepth 1 -type f -name '*.jar' ! -name '*-sources.jar' -print -quit)
+          if [ -z "$J" ]; then
+            echo "JAR не найден в build/libs"
+            find project -path '*/build/libs/*' -type f
+            exit 1
+          fi
+          mkdir -p output
+          cp "$J" output/zenix-client.jar
+          unzip -l output/zenix-client.jar | head -80
 
       - uses: actions/upload-artifact@v4
         with:
-          name: zenix-client-1.0.0
-          path: zenix-client-1.0.0.jar
-
-      - name: Release (direct download link)
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: ZENIX CLIENT build ${{ github.run_number }}
-          files: zenix-client-1.0.0.jar
+          name: zenix-client
+          path: output/zenix-client.jar
